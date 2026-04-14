@@ -57,20 +57,18 @@ def query_pdf(query: str):
     if vector_db is None:
         return "No PDF uploaded yet."
 
-    # Get docs with similarity scores
     docs_with_scores = vector_db.similarity_search_with_score(query, k=3)
 
-    # Debug (optional)
     print("Scores:", docs_with_scores)
 
-    # Filter relevant docs (lower score = more similar in FAISS)
+    # 🔥 better threshold
     relevant_docs = [
-        doc for doc, score in docs_with_scores if score < 0.5
+        doc for doc, score in docs_with_scores if score < 1.5
     ]
 
-    # If nothing relevant → return None
+    # 🔥 fallback
     if not relevant_docs:
-        return None
+        relevant_docs = [doc for doc, _ in docs_with_scores]
 
     context = "\n".join([doc.page_content for doc in relevant_docs])
 
