@@ -13,6 +13,7 @@ client = OpenAI(
 def generate_response(messages):
     response = client.chat.completions.create(
         model="mistralai/mistral-7b-instruct-v0.1",
-        messages=messages
+        messages=messages,
+        temperature=0.2
     )
     return response.choices[0].message.content

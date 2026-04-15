@@ -5,7 +5,8 @@ router = APIRouter()
 
 @router.post("/chat")
 def chat(prompt: str = Body(..., embed=True)):
-    response = generate_response([
-        {"role": "user", "content": prompt}
-    ])
-    return {"response": response}
+    try:
+        response = generate_response([...])
+        return {"response": response}
+    except Exception as e:
+        return {"error": str(e)}
