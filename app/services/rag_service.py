@@ -5,37 +5,59 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 import os
 
-# Load embedding model
+# ==============================
+# CONFIG
+# ==============================
+
+VECTOR_DB_PATH = "data/faiss_index"
+
 embedding_model = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
 
-VECTOR_DB_PATH = "data/faiss_index"
-
 vector_db = None
 
+
+# ==============================
+# UTILS
+# ==============================
+
+def clean_text(text: str) -> str:
+    """Remove extra spaces/newlines from PDF text"""
+    return " ".join(text.split())
+
+
+# ==============================
+# INGESTION (UPLOAD PDF)
+# ==============================
 
 def process_pdf(file_path: str):
     global vector_db
 
+    # Load PDF
     loader = PyPDFLoader(file_path)
     documents = loader.load()
 
+    # Split into chunks
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=500,
         chunk_overlap=50
     )
-
     chunks = splitter.split_documents(documents)
 
+    # Create vector DB
     vector_db = FAISS.from_documents(chunks, embedding_model)
 
-    # Save DB
+    # Persist DB
     os.makedirs("data", exist_ok=True)
     vector_db.save_local(VECTOR_DB_PATH)
 
     return "PDF processed and stored successfully"
 
+
+# ==============================
+# LOAD EXISTING DB
+# ==============================
 
 def load_vector_db():
     global vector_db
@@ -46,30 +68,56 @@ def load_vector_db():
             embedding_model,
             allow_dangerous_deserialization=True
         )
+        print("✅ Vector DB loaded")
+    else:
+        print("⚠️ No existing vector DB found")
 
+
+# ==============================
+# QUERY (RAG)
+# ==============================
 
 def query_pdf(query: str):
     global vector_db
 
+    # If DB not loaded (fallback safety)
     if vector_db is None:
         load_vector_db()
 
     if vector_db is None:
         return "No PDF uploaded yet."
 
+    # Retrieve similar docs
     docs_with_scores = vector_db.similarity_search_with_score(query, k=3)
 
-    print("Scores:", docs_with_scores)
+    if not docs_with_scores:
+        return None
 
-    # 🔥 better threshold
+    # Debug logs
+    print("\n🔍 Similarity Scores:")
+    for doc, score in docs_with_scores:
+        print(f"Score: {score:.4f} | Page: {doc.metadata.get('page')}")
+
+    # ==============================
+    # DYNAMIC THRESHOLD
+    # ==============================
+    top_score = docs_with_scores[0][1]
+
     relevant_docs = [
-        doc for doc, score in docs_with_scores if score < 1.5
+        doc for doc, score in docs_with_scores if score <= top_score + 0.3
     ]
 
-    # 🔥 fallback
+    # Fallback (if strict filter removes everything)
     if not relevant_docs:
         relevant_docs = [doc for doc, _ in docs_with_scores]
 
-    context = "\n".join([doc.page_content for doc in relevant_docs])
+    # Limit number of chunks (avoid token overflow)
+    relevant_docs = relevant_docs[:2]
+
+    # Build clean context
+    context = "\n\n".join([
+        f"[Page {doc.metadata.get('page')}]\n{clean_text(doc.page_content)}"
+        for doc in relevant_docs
+    ])
 
     return context

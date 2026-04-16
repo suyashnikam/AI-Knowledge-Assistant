@@ -16,7 +16,10 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 @router.post("/upload")
 def upload_pdf(file: UploadFile = File(...)):
     if not file.filename.endswith(".pdf"):
-        return {"error": "Only PDF files are allowed"}
+        raise HTTPException(status_code=400, detail="Only PDF files allowed")
+
+    if file.size > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large")
 
     unique_name = f"{uuid.uuid4()}_{file.filename}"
     file_path = os.path.join(UPLOAD_DIR, unique_name)
@@ -66,4 +69,7 @@ Context:
         {"role": "user", "content": prompt}
     ])
 
-    return {"response": response}
+    return {
+        "response": response, 
+        "context_used": context[:500]  # debug
+    }
