@@ -23,32 +23,40 @@ vector_db = None
 # ==============================
 
 def clean_text(text: str) -> str:
-    """Remove extra spaces/newlines from PDF text"""
     return " ".join(text.split())
 
 
 # ==============================
-# INGESTION (UPLOAD PDF)
+# INGESTION
 # ==============================
 
 def process_pdf(file_path: str):
     global vector_db
 
-    # Load PDF
     loader = PyPDFLoader(file_path)
     documents = loader.load()
 
-    # Split into chunks
+    # Better chunking for semantic continuity
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=50
+        chunk_size=1500,
+        chunk_overlap=200
     )
+
     chunks = splitter.split_documents(documents)
 
-    # Create vector DB
-    vector_db = FAISS.from_documents(chunks, embedding_model)
+    # Attach metadata (only source)
+    for chunk in chunks:
+        chunk.metadata["source"] = os.path.basename(file_path)
 
-    # Persist DB
+    # Load existing DB (multi-doc support)
+    if vector_db is None:
+        load_vector_db()
+
+    if vector_db:
+        vector_db.add_documents(chunks)
+    else:
+        vector_db = FAISS.from_documents(chunks, embedding_model)
+
     os.makedirs("data", exist_ok=True)
     vector_db.save_local(VECTOR_DB_PATH)
 
@@ -56,7 +64,7 @@ def process_pdf(file_path: str):
 
 
 # ==============================
-# LOAD EXISTING DB
+# LOAD DB
 # ==============================
 
 def load_vector_db():
@@ -74,50 +82,45 @@ def load_vector_db():
 
 
 # ==============================
-# QUERY (RAG)
+# QUERY
 # ==============================
 
 def query_pdf(query: str):
     global vector_db
 
-    # If DB not loaded (fallback safety)
     if vector_db is None:
         load_vector_db()
 
     if vector_db is None:
-        return "No PDF uploaded yet."
+        return "No PDF uploaded yet.", []
 
-    # Retrieve similar docs
-    docs_with_scores = vector_db.similarity_search_with_score(query, k=3)
+    # High recall retrieval (NO filtering)
+    docs_with_scores = vector_db.similarity_search_with_score(query, k=15)
 
     if not docs_with_scores:
-        return None
+        return None, []
 
-    # Debug logs
     print("\n🔍 Similarity Scores:")
     for doc, score in docs_with_scores:
-        print(f"Score: {score:.4f} | Page: {doc.metadata.get('page')}")
+        print(
+            f"Score: {score:.4f} | "
+            f"Source: {doc.metadata.get('source')} | "
+            f"Page: {doc.metadata.get('page')}"
+        )
 
-    # ==============================
-    # DYNAMIC THRESHOLD
-    # ==============================
-    top_score = docs_with_scores[0][1]
+    # Take top-k directly (no threshold hacks)
+    docs = [doc for doc, _ in docs_with_scores[:8]]
 
-    relevant_docs = [
-        doc for doc, score in docs_with_scores if score <= top_score + 0.3
-    ]
-
-    # Fallback (if strict filter removes everything)
-    if not relevant_docs:
-        relevant_docs = [doc for doc, _ in docs_with_scores]
-
-    # Limit number of chunks (avoid token overflow)
-    relevant_docs = relevant_docs[:2]
-
-    # Build clean context
+    # Build context
     context = "\n\n".join([
-        f"[Page {doc.metadata.get('page')}]\n{clean_text(doc.page_content)}"
-        for doc in relevant_docs
+        f"[{doc.metadata.get('source')} | Page {doc.metadata.get('page')}]\n"
+        f"{clean_text(doc.page_content)}"
+        for doc in docs
     ])
 
-    return context
+    sources = list(set([
+        doc.metadata.get("source")
+        for doc in docs
+    ]))
+
+    return context, sources

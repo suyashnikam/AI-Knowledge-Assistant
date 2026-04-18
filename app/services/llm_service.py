@@ -11,6 +11,7 @@ client = OpenAI(
 
 
 def generate_response(messages):
+    print("messages:", messages)
     response = client.chat.completions.create(
         model="mistralai/mistral-7b-instruct-v0.1",
         messages=messages,

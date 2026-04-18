@@ -1,11 +1,10 @@
 from fastapi import APIRouter, UploadFile, File, Body, HTTPException
 import shutil
 import os
+import uuid
 
 from app.services.rag_service import process_pdf, query_pdf
 from app.services.llm_service import generate_response
-import uuid
-
 
 router = APIRouter(prefix="/rag", tags=["RAG"])
 
@@ -18,9 +17,6 @@ def upload_pdf(file: UploadFile = File(...)):
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files allowed")
 
-    if file.size > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File too large")
-
     unique_name = f"{uuid.uuid4()}_{file.filename}"
     file_path = os.path.join(UPLOAD_DIR, unique_name)
 
@@ -29,38 +25,34 @@ def upload_pdf(file: UploadFile = File(...)):
 
     file.file.close()
 
-    try:
-        result = process_pdf(file_path)
-        return {"message": result}
-    except Exception as e:
-        return {"error": str(e)}
+    result = process_pdf(file_path)
+    return {"message": result}
 
 
 @router.post("/chat-with-pdf")
 def chat_with_pdf(prompt: str = Body(..., embed=True)):
-    context = query_pdf(prompt)
+    context, sources = query_pdf(prompt)
 
-    # Case 1: No PDF uploaded
     if context == "No PDF uploaded yet.":
         return {"response": context}
 
-    # Case 2: No relevant context found
     if context is None:
         return {"response": "I don't know"}
 
-    # limit context size (important)
-    context = context[:3000]
+    context = context[:6000]
 
     response = generate_response([
         {
             "role": "system",
             "content": f"""
-You are a strict assistant.
+You are an expert information extraction assistant.
 
-Rules:
-- Answer ONLY from the provided context
-- If the answer is not clearly present, respond with: "I don't know"
-- Do NOT use prior knowledge
+Instructions:
+- Answer strictly from the context
+- Extract complete information if multiple items exist
+- Do not miss relevant details
+- Do not guess or add external knowledge
+- If answer is not present, say "I don't know"
 
 Context:
 {context}
@@ -70,6 +62,6 @@ Context:
     ])
 
     return {
-        "response": response, 
-        "context_used": context[:500]  # debug
+        "response": response,
+        "sources": sources
     }
